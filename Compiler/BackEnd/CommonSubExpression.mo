@@ -212,6 +212,25 @@ algorithm
   (HT, exarray, orderedEqs_new) := inTuple;
 
   _ := match(inEq)
+
+    case BackendDAE.ALGORITHM() equation
+      if debug then
+        BackendDump.dumpEquationList({inEq}, "wrapFunctionCalls_analysis (ALGORITHM)");
+      end if;
+      (eq, (HT, exarray, orderedEqs_new)) = BackendEquation.traverseExpsOfEquation(inEq, wrapFunctionCalls_substitution2, (HT, exarray, orderedEqs_new));
+
+      if not isEquationRedundant(eq) then
+        orderedEqs_new = BackendEquation.addEquation(eq, orderedEqs_new);
+        if debug then
+          BackendDump.dumpEquationList({eq}, "isEquationRedundant? no");
+        end if;
+      else
+        if debug then
+          BackendDump.dumpEquationList({eq}, "isEquationRedundant? yes");
+        end if;
+      end if;
+    then ();
+
     case BackendDAE.COMPLEX_EQUATION() equation
       if debug then
         BackendDump.dumpEquationList({inEq}, "wrapFunctionCalls_substitution (COMPLEX_EQUATION)");
@@ -458,10 +477,20 @@ protected
   DAE.Type ty;
   list<DAE.Type> types;
   CSE_Equation cseEquation;
+  list<DAE.Statement> statementLst;
 algorithm
   (HT, exarray, cseIndex, index, functionTree) := inTuple;
 
   _ := match(inEq)
+
+    case BackendDAE.ALGORITHM(alg = DAE.ALGORITHM_STMTS(statementLst = statementLst)) algorithm
+      if debug then
+        BackendDump.dumpEquationList({inEq}, "wrapFunctionCalls_analysis (ALGORITHM)");
+      end if;
+        (HT, exarray, cseIndex, index, functionTree) := handleStatements(statementLst, (HT, exarray, cseIndex, index, functionTree));
+      //(_, (HT, exarray, cseIndex, index, functionTree)) := BackendEquation.traverseExpsOfEquation(inEq, wrapFunctionCalls_analysis2, (HT, exarray, cseIndex, index, functionTree));
+    then ();
+
     case BackendDAE.COMPLEX_EQUATION(left=lhs, right=rhs) algorithm
       if debug then
         BackendDump.dumpEquationList({inEq}, "wrapFunctionCalls_analysis (COMPLEX_EQUATION)");
@@ -534,6 +563,51 @@ algorithm
   outTuple := (HT, exarray, cseIndex, index, functionTree);
 end wrapFunctionCalls_analysis;
 
+protected function handleStatements
+  input list<DAE.Statement> StmList;
+  input tuple<HashTableExpToIndex.HashTable, ExpandableArray<CSE_Equation>, Integer, Integer, DAE.FunctionTree> inTuple;
+  output tuple<HashTableExpToIndex.HashTable, ExpandableArray<CSE_Equation>, Integer, Integer, DAE.FunctionTree> outTuple;
+algorithm
+  outTuple := match(StmList, inTuple)
+  local
+    DAE.Statement stm;
+    list<DAE.Statement> stmlst;
+    DAE.Exp exp;
+    tuple<HashTableExpToIndex.HashTable, ExpandableArray<CSE_Equation>, Integer, Integer, DAE.FunctionTree> tpl;
+
+  case (stm::{}, tpl) equation
+    if isStatementSTMT_ASSIGN(stm) then
+      // print(DAEDump.ppStmtStr(stm,2) + "\n");
+      DAE.STMT_ASSIGN(exp = exp) = stm;
+      (_, tpl) = Expression.traverseExpTopDown(exp, wrapFunctionCalls_analysis3, tpl);
+      //Handle Exp of Statements with wrapFunctionCalls_analysis2
+    end if;
+  then tpl;
+
+  case (stm::stmlst, tpl) equation
+    if isStatementSTMT_ASSIGN(stm) then
+      // print(DAEDump.ppStmtStr(stm,2) + "\n");
+      DAE.STMT_ASSIGN(exp = exp) = stm;
+      (_, tpl) = Expression.traverseExpTopDown(exp, wrapFunctionCalls_analysis3, tpl);
+      //Handle Exp of Statements wrapFunctionCalls_analysis2
+    end if;
+    tpl = handleStatements(stmlst, tpl);
+  then tpl;
+
+  else fail ();
+  end match;
+end handleStatements;
+
+protected function isStatementSTMT_ASSIGN
+  input DAE.Statement inStm;
+  output Boolean outB;
+algorithm
+  outB := match(inStm)
+  case DAE.STMT_ASSIGN() then true;
+  else false;
+  end match;
+end isStatementSTMT_ASSIGN;
+
 protected function createCrefForTsub "(4, 2, x)  -> TUPLE(_,x,_,_)"
   input Integer length;
   input Integer ix;
@@ -575,7 +649,6 @@ protected
   Integer cseIndex, index;
 algorithm
   (HT, exarray, cseIndex, index, functionTree) := inTuple;
-
   cont := match(inExp)
     local
       DAE.Exp cse_var, call, e;
